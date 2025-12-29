@@ -203,6 +203,14 @@
                 android:layout_marginRight="18dp"
                 android:layout_marginLeft="6dp" />
 
+            <CheckBox
+                android:id="@+id/showFps"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/show_fps_title"
+                android:layout_marginLeft="6dp"
+                android:layout_marginTop="16dp" />
+
             <Button
                 android:id="@+id/resetButton"
                 android:layout_width="wrap_content"

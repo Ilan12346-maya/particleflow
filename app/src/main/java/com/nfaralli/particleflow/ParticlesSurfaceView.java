@@ -16,15 +16,31 @@ import android.view.View;
 public class ParticlesSurfaceView extends GLSurfaceView
         implements SharedPreferences.OnSharedPreferenceChangeListener {
 
+    public interface FrameRenderedListener {
+        void onFrameRendered();
+    }
+
+    private FrameRenderedListener mFrameRenderedListener;
+
+    public void setFrameRenderedListener(FrameRenderedListener listener) {
+        mFrameRenderedListener = listener;
+    }
+
+    public void notifyFrameRendered() {
+        if (mFrameRenderedListener != null) {
+            mFrameRenderedListener.onFrameRendered();
+        }
+    }
+
     public static final String SHARED_PREFS_NAME="particleFlowPrefs";
-    public static final int DEFAULT_NUM_PARTICLES = 50000;
-    public static final int MAX_NUM_PARTICLES = 1000000;
+    public static final int DEFAULT_NUM_PARTICLES = 350000;
+    public static final int MAX_NUM_PARTICLES = 10000000;
     public static final int DEFAULT_PARTICLE_SIZE = 1;
     public static final int DEFAULT_MAX_NUM_ATT_POINTS = 5;
     public static final int MAX_MAX_NUM_ATT_POINTS = 16;
     public static final int DEFAULT_BG_COLOR = 0xFF000000;
-    public static final int DEFAULT_SLOW_COLOR = 0xFF4C4CFF;
-    public static final int DEFAULT_FAST_COLOR = 0xFFFF4C4C;
+    public static final int DEFAULT_SLOW_COLOR = 0xFF0000FF;
+    public static final int DEFAULT_FAST_COLOR = 0xFFFF0000;
     public static final int DEFAULT_HUE_DIRECTION = 0;
     public static final int DEFAULT_F01_ATTRACTION_COEF = 100;
     public static final int DEFAULT_F01_DRAG_COEF = 4;
@@ -51,7 +67,7 @@ public class ParticlesSurfaceView extends GLSurfaceView
         setEGLContextClientVersion(2);
 
         // Create and set the Renderer for drawing on the GLSurfaceView
-        mRenderer = new ParticlesRenderer(context);
+        mRenderer = new ParticlesRenderer(context, this);
         setRenderer(mRenderer);
 
         // Get the shared preferences and create the counter array.

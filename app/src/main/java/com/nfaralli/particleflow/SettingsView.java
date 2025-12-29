@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.view.View;
 import android.widget.AdapterView;
+import android.widget.CheckBox; // Added import
 import android.widget.FrameLayout;
 import android.widget.Spinner;
 
@@ -20,6 +21,7 @@ public class SettingsView extends FrameLayout {
     private GradientView mBGGradientView;
     private GradientView mPartGradientView;
     private Spinner mHueDirection;
+    private CheckBox mShowFpsCheckBox; // Added
     private SharedPreferences mPrefs;
 
     public SettingsView(Context context) {
@@ -46,6 +48,7 @@ public class SettingsView extends FrameLayout {
         mF01Drag = (ValidatedEditText)findViewById(R.id.f01_drag);
         mF01Drag.setMinValue(0);
         mF01Drag.setMaxValue(100);
+        mShowFpsCheckBox = (CheckBox)findViewById(R.id.showFps); // Added
         mPrefs = context.getSharedPreferences(ParticlesSurfaceView.SHARED_PREFS_NAME,
                 Context.MODE_PRIVATE);
 
@@ -108,6 +111,7 @@ public class SettingsView extends FrameLayout {
                 ParticlesSurfaceView.DEFAULT_F01_ATTRACTION_COEF)));
         mF01Drag.setText(String.valueOf(mPrefs.getInt("F01Drag",
                 ParticlesSurfaceView.DEFAULT_F01_DRAG_COEF)));
+        mShowFpsCheckBox.setChecked(mPrefs.getBoolean("show_fps", false)); // Added
     }
 
     public void loadDefaultValues() {
@@ -120,6 +124,7 @@ public class SettingsView extends FrameLayout {
         mHueDirection.setSelection(ParticlesSurfaceView.DEFAULT_HUE_DIRECTION);
         mF01Attraction.setText(String.valueOf(ParticlesSurfaceView.DEFAULT_F01_ATTRACTION_COEF));
         mF01Drag.setText(String.valueOf(ParticlesSurfaceView.DEFAULT_F01_DRAG_COEF));
+        mShowFpsCheckBox.setChecked(false); // Added
     }
 
     public void saveValues() {
@@ -139,6 +144,7 @@ public class SettingsView extends FrameLayout {
         editor.putInt("HueDirection", mHueDirection.getSelectedItemPosition());
         editor.putInt("F01Attraction", Integer.parseInt(mF01Attraction.getText().toString()));
         editor.putInt("F01Drag", Integer.parseInt(mF01Drag.getText().toString()));
+        editor.putBoolean("show_fps", mShowFpsCheckBox.isChecked()); // Added
         editor.commit();
     }
 }
