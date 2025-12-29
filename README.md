@@ -1,3 +1,18 @@
+Hi, I’m Ilan 👋
+
+I’ve been using this app since my HTC One days — it has always been a joy to watch and play with.
+
+After updating to **Android 15**, the app unfortunately stopped working. While looking for a solution, I found the project here on GitHub, so I decided to **fork it and bring it up to date** with a recent **Gradle version and JDK**.
+
+## Changes in this fork
+- Added an **FPS counter**
+- Increased the default particle count from **50k to 350k**
+- Changed the default color tone to a **more vivid look**
+- Updated the build setup to work with **modern Android / Android 15**
+
+Many thanks to **nfaralli** for creating this beautiful app in the first place 🙌  
+Below you can find the original README.
+
 # Welcome to Particle Flow!
 
 This simple app displays particles moving thanks to some attraction points that you can move by
