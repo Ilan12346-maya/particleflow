@@ -15,7 +15,9 @@ import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
 import android.util.Log;
-import android.support.v8.renderscript.*;
+import android.renderscript.*;
+
+
 
 /**
  * Renderer in charge of drawing the particles.
@@ -62,6 +64,10 @@ public class ParticlesRenderer implements GLSurfaceView.Renderer {
     private float[] pos;
     private float[] col;
 
+    private ParticlesSurfaceView mParticlesSurfaceView;
+
+
+
     private final String mVertexShader =
         "uniform mat4 uMVPMatrix;\n" +
         "uniform float uPointSize;" +
@@ -85,13 +91,16 @@ public class ParticlesRenderer implements GLSurfaceView.Renderer {
      * Public constructor.
      * initScript is not called here as it will be called in onSurfaceChanged later on.
      */
-    public ParticlesRenderer(Context context) {
+    public ParticlesRenderer(Context context, ParticlesSurfaceView view) {
         mPrefs = context.getSharedPreferences(ParticlesSurfaceView.SHARED_PREFS_NAME,
                 Context.MODE_PRIVATE);
         mRS = RenderScript.create(context);
         mScript = new ScriptC_particleflow(mRS);
+        this.mParticlesSurfaceView = view;
         init();
     }
+
+
 
     /**
      * Should be called when preferences are changed.
@@ -313,6 +322,10 @@ public class ParticlesRenderer implements GLSurfaceView.Renderer {
         
         GLES20.glDrawArrays(GLES20.GL_POINTS, 0, mPartCount);
         checkGlError("glDrawArrays");
+
+        if (mParticlesSurfaceView != null) {
+            mParticlesSurfaceView.notifyFrameRendered();
+        }
     }
 
     private int createProgram(String vertexSource, String fragmentSource) {

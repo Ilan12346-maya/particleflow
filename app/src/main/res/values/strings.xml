@@ -22,6 +22,8 @@
     <string name="force_coefficients">Force Coefficients:</string>
     <string name="force01_attraction">Attraction:</string>
     <string name="force01_drag">Drag:</string>
+    <string name="show_fps_title">Show FPS</string>
+    <string name="show_fps_summary">Display frames per second</string>
     <string name="reset">Reset</string>
     <string name="settings_hint">
         Hint: click on the top right corner to display the Settings icon.</string>

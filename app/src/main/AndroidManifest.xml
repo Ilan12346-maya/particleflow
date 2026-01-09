@@ -1,11 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.nfaralli.particleflow"
-    android:versionCode="10200"
-    android:versionName="1.2.0" >
-
-    <uses-sdk
-        android:minSdkVersion="8"
-        android:targetSdkVersion="22" />
+    android:versionCode="10201"
+    android:versionName="1.2.1" >
 
     <!-- Tell the system this app requires OpenGL ES 2.0. -->
     <uses-feature
@@ -25,7 +20,8 @@
 
         <!-- Main activity. -->
         <activity
-            android:name=".MainActivity">
+            android:name=".MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -35,7 +31,8 @@
         <!-- Service used for the live wallpaper. -->
         <service
             android:name=".ParticleFlowWallpaperService"
-            android:permission="android.permission.BIND_WALLPAPER">
+            android:permission="android.permission.BIND_WALLPAPER"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.service.wallpaper.WallpaperService" />
             </intent-filter>

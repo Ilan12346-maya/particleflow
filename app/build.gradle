@@ -1,15 +1,20 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 22
-    buildToolsVersion "19.1"
+    namespace 'com.nfaralli.particleflow'
+    compileSdkVersion 33
+
+    buildFeatures {
+        renderScript = true
+    }
 
     defaultConfig {
         applicationId "com.nfaralli.particleflow"
-        minSdkVersion 8
-        targetSdkVersion 22
-        renderscriptTargetApi 18
-        renderscriptSupportModeEnabled true
+        minSdkVersion 21
+        targetSdkVersion 33
+        renderscriptTargetApi 21
+        renderscriptSupportModeEnabled false
+        multiDexEnabled true
     }
 
     buildTypes {
@@ -17,5 +22,9 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
         }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 }
