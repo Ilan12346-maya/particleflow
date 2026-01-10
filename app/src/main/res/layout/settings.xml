@@ -203,13 +203,34 @@
                 android:layout_marginRight="18dp"
                 android:layout_marginLeft="6dp" />
 
-            <CheckBox
-                android:id="@+id/showFps"
-                android:layout_width="wrap_content"
+            <TextView
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/show_fps_title"
+                android:text="@string/render_scale"
                 android:layout_marginLeft="6dp"
-                android:layout_marginTop="16dp" />
+                android:layout_marginTop="16dp"
+                android:layout_marginRight="6dp" />
+
+            <com.nfaralli.particleflow.ValidatedEditText
+                android:id="@+id/renderScale"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:ems="10"
+                android:layout_marginRight="6dp"
+                android:layout_marginLeft="6dp" />
+
+                <CheckBox
+                    android:id="@+id/showFps"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/show_fps_title" />
+
+                <CheckBox
+                    android:id="@+id/useDoubleBuffer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/double_buffer_title" />
 
             <Button
                 android:id="@+id/resetButton"

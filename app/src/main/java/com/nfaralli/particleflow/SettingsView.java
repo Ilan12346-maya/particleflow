@@ -15,13 +15,15 @@ public class SettingsView extends FrameLayout {
     private ValidatedEditText mNumAttPoints;
     private ValidatedEditText mF01Attraction;
     private ValidatedEditText mF01Drag;
+    private ValidatedEditText mRenderScale;
     private ColorView mBGColor;
     private ColorView mSlowPColor;
     private ColorView mFastPColor;
     private GradientView mBGGradientView;
     private GradientView mPartGradientView;
     private Spinner mHueDirection;
-    private CheckBox mShowFpsCheckBox; // Added
+    private CheckBox mShowFpsCheckBox;
+    private CheckBox mUseDoubleBufferCheckBox;
     private SharedPreferences mPrefs;
 
     public SettingsView(Context context) {
@@ -48,7 +50,11 @@ public class SettingsView extends FrameLayout {
         mF01Drag = (ValidatedEditText)findViewById(R.id.f01_drag);
         mF01Drag.setMinValue(0);
         mF01Drag.setMaxValue(100);
-        mShowFpsCheckBox = (CheckBox)findViewById(R.id.showFps); // Added
+        mRenderScale = (ValidatedEditText)findViewById(R.id.renderScale);
+        mRenderScale.setMinValue(10);
+        mRenderScale.setMaxValue(100);
+        mShowFpsCheckBox = (CheckBox)findViewById(R.id.showFps);
+        mUseDoubleBufferCheckBox = (CheckBox)findViewById(R.id.useDoubleBuffer);
         mPrefs = context.getSharedPreferences(ParticlesSurfaceView.SHARED_PREFS_NAME,
                 Context.MODE_PRIVATE);
 
@@ -111,7 +117,9 @@ public class SettingsView extends FrameLayout {
                 ParticlesSurfaceView.DEFAULT_F01_ATTRACTION_COEF)));
         mF01Drag.setText(String.valueOf(mPrefs.getInt("F01Drag",
                 ParticlesSurfaceView.DEFAULT_F01_DRAG_COEF)));
-        mShowFpsCheckBox.setChecked(mPrefs.getBoolean("show_fps", false)); // Added
+        mRenderScale.setText(String.valueOf(mPrefs.getInt("RenderScale", 100)));
+        mShowFpsCheckBox.setChecked(mPrefs.getBoolean("show_fps", false));
+        mUseDoubleBufferCheckBox.setChecked(mPrefs.getBoolean("use_double_buffer", true));
     }
 
     public void loadDefaultValues() {
@@ -124,7 +132,9 @@ public class SettingsView extends FrameLayout {
         mHueDirection.setSelection(ParticlesSurfaceView.DEFAULT_HUE_DIRECTION);
         mF01Attraction.setText(String.valueOf(ParticlesSurfaceView.DEFAULT_F01_ATTRACTION_COEF));
         mF01Drag.setText(String.valueOf(ParticlesSurfaceView.DEFAULT_F01_DRAG_COEF));
-        mShowFpsCheckBox.setChecked(false); // Added
+        mRenderScale.setText("100");
+        mShowFpsCheckBox.setChecked(false);
+        mUseDoubleBufferCheckBox.setChecked(true);
     }
 
     public void saveValues() {
@@ -144,7 +154,9 @@ public class SettingsView extends FrameLayout {
         editor.putInt("HueDirection", mHueDirection.getSelectedItemPosition());
         editor.putInt("F01Attraction", Integer.parseInt(mF01Attraction.getText().toString()));
         editor.putInt("F01Drag", Integer.parseInt(mF01Drag.getText().toString()));
-        editor.putBoolean("show_fps", mShowFpsCheckBox.isChecked()); // Added
+        editor.putInt("RenderScale", Integer.parseInt(mRenderScale.getText().toString()));
+        editor.putBoolean("show_fps", mShowFpsCheckBox.isChecked());
+        editor.putBoolean("use_double_buffer", mUseDoubleBufferCheckBox.isChecked());
         editor.commit();
     }
 }

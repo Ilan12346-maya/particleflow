@@ -6,10 +6,12 @@ import android.app.Dialog;
 import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.os.Bundle;
-import android.os.Handler; // Added import
+import android.os.Handler;
 import android.view.View;
-import android.widget.TextView; // Added import
+import android.widget.TextView;
 import android.widget.Toast;
+
+import java.util.Locale;
 
 /**
  * Super basic Activity:
@@ -22,38 +24,42 @@ public class MainActivity extends Activity {
     private GearView mGearView;
     private SettingsView mSettingsView;
     private Dialog mSettingsDialog;
-    private TextView mFpsTextView; // Added
-    private Handler mHandler = new Handler(); // Added
-    private long mLastFpsUpdateTime = 0; // Added
-    private int mFrameCount = 0; // Added
-    private Runnable mFpsRunnable; // Added
+    private TextView mFpsTextView;
+    private Handler mHandler = new Handler();
+    private long mLastFpsUpdateTime = 0;
+    private java.util.concurrent.atomic.AtomicInteger mFrameCount = new java.util.concurrent.atomic.AtomicInteger(0);
+    private Runnable mFpsRunnable;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.particles);
         mGLView = (ParticlesSurfaceView)findViewById(R.id.particles_view);
-        mFpsTextView = (TextView)findViewById(R.id.fps_text_view); // Added
-        mGLView.setFrameRenderedListener(new ParticlesSurfaceView.FrameRenderedListener() { // Added
+        mFpsTextView = (TextView)findViewById(R.id.fps_text_view);
+        mGLView.setFrameRenderedListener(new ParticlesSurfaceView.FrameRenderedListener() {
             @Override
-            public void onFrameRendered() { // Added
-                mFrameCount++; // Added
-            } // Added
-        }); // Added
-        mFpsRunnable = new Runnable() { // Added
-            @Override // Added
-            public void run() { // Added
-                long currentTime = System.currentTimeMillis(); // Added
-                long elapsedTime = currentTime - mLastFpsUpdateTime; // Added
-                if (elapsedTime > 0) { // Added
-                    int fps = (int) (mFrameCount * 1000L / elapsedTime); // Added
-                    mFpsTextView.setText("FPS: " + fps); // Added
-                } // Added
-                mFrameCount = 0; // Added
-                mLastFpsUpdateTime = currentTime; // Added
-                mHandler.postDelayed(this, 1000); // Schedule next update (Added)
-            } // Added
-        }; // Added
+            public void onFrameRendered(long computeTimeNs, long renderTimeNs) {
+                mFrameCount.incrementAndGet();
+            }
+        });
+        mFpsRunnable = new Runnable() {
+            @Override
+            public void run() {
+                long currentTime = System.currentTimeMillis();
+                long elapsedTime = currentTime - mLastFpsUpdateTime;
+                if (elapsedTime > 0) {
+                    int frames = mFrameCount.getAndSet(0);
+                    int fps = (int) (frames * 1000L / elapsedTime);
+                    
+                    SharedPreferences prefs = getSharedPreferences(ParticlesSurfaceView.SHARED_PREFS_NAME, MODE_PRIVATE);
+                    if (prefs.getBoolean("show_fps", false)) {
+                        mFpsTextView.setText(String.format(Locale.US, "FPS: %d", fps));
+                    }
+                }
+                mLastFpsUpdateTime = currentTime;
+                mHandler.postDelayed(this, 200);
+            }
+        };
         mSettingsView = new SettingsView(this);
         mSettingsDialog = getSettingsDialog();
         mGearView = (GearView)findViewById(R.id.gear_view);
@@ -75,7 +81,7 @@ public class MainActivity extends Activity {
         super.onPause();
         mGLView.onPause();
         mGearView.hideGear();
-        mHandler.removeCallbacks(mFpsRunnable); // Added
+        mHandler.removeCallbacks(mFpsRunnable);
     }
 
     @Override
@@ -89,14 +95,14 @@ public class MainActivity extends Activity {
             editor.putBoolean("ShowSettingsHint", false);
             editor.commit();
         }
-        // Update FPS display visibility based on preference (Added)
-        boolean showFps = prefs.getBoolean("show_fps", false); // Default to false (Added)
-        mFpsTextView.setVisibility(showFps ? View.VISIBLE : View.GONE); // Added
-        if (showFps) { // Added
-            mLastFpsUpdateTime = System.currentTimeMillis(); // Reset FPS timer (Added)
-            mFrameCount = 0; // Reset frame count (Added)
-            mHandler.postDelayed(mFpsRunnable, 1000); // Start FPS updates (Added)
-        } // Added
+        // Update display visibility based on preferences
+        boolean showFps = prefs.getBoolean("show_fps", false);
+        mFpsTextView.setVisibility(showFps ? View.VISIBLE : View.GONE);
+        if (showFps) {
+            mLastFpsUpdateTime = System.currentTimeMillis();
+            mFrameCount.set(0);
+            mHandler.postDelayed(mFpsRunnable, 200);
+        }
         mGLView.onResume();
     }
 
@@ -110,17 +116,18 @@ public class MainActivity extends Activity {
                     public void onClick(DialogInterface dialog, int id) {
                         mSettingsView.saveValues();
                         mGLView.onResume();
-                        // Re-evaluate FPS display visibility after settings change (Added)
-                        SharedPreferences prefs = getSharedPreferences(ParticlesSurfaceView.SHARED_PREFS_NAME, MODE_PRIVATE); // Added
-                        boolean showFps = prefs.getBoolean("show_fps", false); // Added
-                        mFpsTextView.setVisibility(showFps ? View.VISIBLE : View.GONE); // Added
-                        if (showFps) { // Added
-                            mLastFpsUpdateTime = System.currentTimeMillis(); // Reset FPS timer (Added)
-                            mFrameCount = 0; // Reset frame count (Added)
-                            mHandler.postDelayed(mFpsRunnable, 1000); // Start FPS updates (Added)
-                        } else { // Added
-                            mHandler.removeCallbacks(mFpsRunnable); // Stop FPS updates (Added)
-                        } // Added
+                        // Re-evaluate display visibility after settings change
+                        SharedPreferences prefs = getSharedPreferences(ParticlesSurfaceView.SHARED_PREFS_NAME, MODE_PRIVATE);
+                        boolean showFps = prefs.getBoolean("show_fps", false);
+                        mFpsTextView.setVisibility(showFps ? View.VISIBLE : View.GONE);
+                        if (showFps) {
+                            mLastFpsUpdateTime = System.currentTimeMillis();
+                            mFrameCount.set(0);
+                            mHandler.removeCallbacks(mFpsRunnable);
+                            mHandler.postDelayed(mFpsRunnable, 200);
+                        } else {
+                            mHandler.removeCallbacks(mFpsRunnable);
+                        }
                     }
                 })
                 .setNegativeButton(R.string.cancel, new DialogInterface.OnClickListener() {

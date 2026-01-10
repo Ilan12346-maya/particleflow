@@ -1,9 +1,9 @@
 package com.nfaralli.particleflow;
 
-import java.lang.Math;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
+import java.util.Random;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -11,393 +11,333 @@ import javax.microedition.khronos.opengles.GL10;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
-import android.opengl.GLES20;
+import android.opengl.GLES31;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
 import android.util.Log;
-import android.renderscript.*;
 
-
-
-/**
- * Renderer in charge of drawing the particles.
- * Computing the particles trajectory is quite expensive and slow in java, hence the use of
- * renderscript.
- * The loadShader and loadGlError methods are taken from a code sample of the Android tutorial:
- * http://developer.android.com/training/graphics/opengl/environment.html
- */
 public class ParticlesRenderer implements GLSurfaceView.Renderer {
 
     private static final String TAG = "ParticlesRenderer";
-    
-    private FloatBuffer mPointVertices;
-    private FloatBuffer mPointColors;
-
-    // mMVPMatrix is an abbreviation for "Model View Projection Matrix"
-    private final float[] mMVPMatrix = new float[16];
-    private final float[] mProjectionMatrix = new float[16];
-    private final float[] mViewMatrix = new float[16];
 
     private SharedPreferences mPrefs;
-
-    private int mProgram;
-    private int maPositionHandle;
-    private int maColorHandle;
-    private int muMVPMatrixHandle;
-    private int muPointSizeHandle;
-    private int mWidth;
-    private int mHeight;
-    
-    private RenderScript mRS;
-    private ScriptC_particleflow mScript;
-    private Boolean initialized = false;
-    private Boolean posDirty = false;
-    private Allocation indices;
-    private Allocation touch;
-    private Allocation position;
-    private Allocation delta;
-    private Allocation color;
-    private int mNumTouch;
-    private int mPartCount;
-    private int mParticleSize;
-    private float[] touchPos;
-    private float[] pos;
-    private float[] col;
-
     private ParticlesSurfaceView mParticlesSurfaceView;
 
+    private int mRenderProgram = 0;
+    private int mComputeProgram = 0;
+    
+    // Render Uniforms (2D Optimized)
+    private int uRScale, uROffset, uRPointSize;
+    private float[] mScale = new float[2];
+    private float[] mOffset = new float[2];
 
+    // Compute Uniforms
+    private int uCNumP, uCNumT, uCTouch, uCAtt, uCDrag, uCGradient;
+    
+    private int mWidth = 1;
+    private int mHeight = 1;
+    private int mPartCount;
+    private int mParticleSize;
+    private int mNumTouch;
 
+    private int[] mSSBOs = new int[2];
+    private int mCurrentBufferIndex = 0;
+    
+    private int mFbo = 0;
+    private int mFboTex = 0;
+    private int mRenderScale = 100;
+    private int mScaledWidth = 1;
+    private int mScaledHeight = 1;
+
+    private int mGradientTex = 0;
+
+    private float[] mTouchPos = new float[32]; // 16 vec2
+    private final Object mTouchLock = new Object();
+
+    private boolean mInitialized = false;
+    private boolean mUseDoubleBuffer = false;
+
+    // Vertex Shader: Ultra-Lean, hardware unpacking
     private final String mVertexShader =
-        "uniform mat4 uMVPMatrix;\n" +
-        "uniform float uPointSize;" +
-        "attribute vec4 aPosition;\n" +
-        "attribute vec4 aColor;\n" +
-        "varying vec4 vColor;\n" +
+        "#version 310 es\n" +
+        "layout(location = 0) in vec4 aPosVel;\n" +
+        "layout(location = 1) in uint aColor;\n" +
+        "uniform vec2 uScale;\n" +
+        "uniform vec2 uOffset;\n" +
+        "uniform float uPointSize;\n" +
+        "out lowp vec4 vColor;\n" +
         "void main() {\n" +
-        "  gl_Position = uMVPMatrix * aPosition;\n" +
+        "  gl_Position = vec4(aPosVel.xy * uScale + uOffset, 0.0, 1.0);\n" +
         "  gl_PointSize = uPointSize;\n" +
-        "  vColor = aColor;\n" +
-        "}\n";	
-
-    private final String mFragmentShader =
-        "precision mediump float;\n" +
-        "varying vec4 vColor;\n" +
-        "void main() {\n" +
-        "  gl_FragColor = vColor;\n" +
+        "  vColor = unpackUnorm4x8(aColor);\n" +
         "}\n";
 
-    /**
-     * Public constructor.
-     * initScript is not called here as it will be called in onSurfaceChanged later on.
-     */
+    private final String mFragmentShader =
+        "#version 310 es\n" +
+        "precision lowp float;\n" +
+        "in lowp vec4 vColor;\n" +
+        "out vec4 fragColor;\n" +
+        "void main() { fragColor = vColor; }\n";
+
+    // Compute Shader: Physics + Packed Color
+    private final String mComputeShader =
+        "#version 310 es\n" +
+        "layout (local_size_x = 256) in;\n" +
+        "precision highp float;\n" +
+        "struct Particle { vec4 posVel; uint color; uint pad1; uint pad2; uint pad3; };\n" +
+        "layout(std430, binding = 0) buffer In { Particle inP[]; };\n" +
+        "layout(std430, binding = 1) buffer Out { Particle outP[]; };\n" +
+        "\n" +
+        "uniform int uNumP, uNumT;\n" +
+        "uniform vec2 uT[16];\n" +
+        "uniform float uAtt, uDrag;\n" +
+        "uniform sampler2D uGradient;\n" +
+        "\n" +
+        "uint hash(uint x) { x = ((x >> 16) ^ x) * 0x45d9f3b1u; x = ((x >> 16) ^ x) * 0x45d9f3b1u; x = (x >> 16) ^ x; return x; }\n" +
+        "\n" +
+        "void main() {\n" +
+        "  uint i = gl_GlobalInvocationID.x;\n" +
+        "  if (i >= uint(uNumP)) return;\n" +
+        "  \n" +
+        "  vec4 data = inP[i].posVel;\n" +
+        "  vec2 p = data.xy, v = data.zw; vec2 acc = vec2(0.0);\n" +
+        "  for (int j = 0; j < uNumT; j++) {\n" +
+        "    if (uT[j].x >= 0.0) {\n" +
+        "      vec2 diff = uT[j] - p;\n" +
+        "      float d2 = dot(diff, diff);\n" +
+        "      if (d2 < 0.1) {\n" +
+        "        float th = float(hash(i + uint(uNumT))) * 1.4629e-9;\n" +
+        "        diff = vec2(cos(th), sin(th)); d2 = 1.0;\n" +
+        "      }\n" +
+        "      acc += (uAtt / d2) * diff;\n" +
+        "    }\n" +
+        "  }\n" +
+        "  v = (v + acc) * uDrag; p += v;\n" +
+        "  \n" +
+        "  highp float sc = clamp(log(dot(v, v) + 1.0) / 4.5, 0.0, 1.0);\n" +
+        "  vec4 c = texture(uGradient, vec2(sc, 0.5));\n" +
+        "  uint packedColor = packUnorm4x8(c);\n" +
+        "  \n" +
+        "  outP[i].posVel = vec4(p, v);\n" +
+        "  outP[i].color = packedColor;\n" +
+        "}\n";
+
     public ParticlesRenderer(Context context, ParticlesSurfaceView view) {
-        mPrefs = context.getSharedPreferences(ParticlesSurfaceView.SHARED_PREFS_NAME,
-                Context.MODE_PRIVATE);
-        mRS = RenderScript.create(context);
-        mScript = new ScriptC_particleflow(mRS);
-        this.mParticlesSurfaceView = view;
-        init();
+        mPrefs = context.getSharedPreferences(ParticlesSurfaceView.SHARED_PREFS_NAME, Context.MODE_PRIVATE);
+        mParticlesSurfaceView = view;
+        loadConfig();
     }
 
-
-
-    /**
-     * Should be called when preferences are changed.
-     */
-    public void onPrefsChanged() {
-        init();
-        initScript(true);
-        int bgColor = mPrefs.getInt("BGColor", ParticlesSurfaceView.DEFAULT_BG_COLOR);
-        float bgRed = Color.red(bgColor) / 255.f;
-        float bgGreen = Color.green(bgColor) / 255.f;
-        float bgBlue = Color.blue(bgColor) / 255.f;
-        GLES20.glClearColor(bgRed, bgGreen, bgBlue, 1.0f);
+    private void loadConfig() {
+        mPartCount = mPrefs.getInt("NumParticles", 1000000);
+        mParticleSize = mPrefs.getInt("ParticleSize", 1);
+        mNumTouch = mPrefs.getInt("NumAttPoints", 5);
+        mUseDoubleBuffer = mPrefs.getBoolean("use_double_buffer", true);
+        mRenderScale = mPrefs.getInt("RenderScale", 100);
+        synchronized (mTouchLock) { for(int i=0; i<32; i++) mTouchPos[i] = -1.0f; }
     }
 
-    /**
-     * Initialization of member variables.
-     * Variables which interact directly with the script (e.g. allocations) are initialized in
-     * initScript.
-     */
-    private void init() {
-        mPartCount = mPrefs.getInt("NumParticles", ParticlesSurfaceView.DEFAULT_NUM_PARTICLES);
-        mParticleSize = mPrefs.getInt("ParticleSize", ParticlesSurfaceView.DEFAULT_PARTICLE_SIZE);
-        mNumTouch = mPrefs.getInt("NumAttPoints", ParticlesSurfaceView.DEFAULT_MAX_NUM_ATT_POINTS);
-        touchPos = new float[2 * mNumTouch];
-        pos = new float[2 * mPartCount];
-        col = new float[4 * mPartCount];
-        mPointVertices = ByteBuffer.allocateDirect(mPartCount * 2 * 4)
-                .order(ByteOrder.nativeOrder()).asFloatBuffer();
-        mPointColors = ByteBuffer.allocateDirect(mPartCount * 4 * 4)
-                .order(ByteOrder.nativeOrder()).asFloatBuffer();
-    }
+    public void onPrefsChanged() { loadConfig(); mInitialized = false; }
 
-    // Set the position of the pointer 'index'.
-    // This does NOT update Allocation touch (i.e. it does not update the script).
-    // Use syncTouch() to update the Allocation touch with these new coordinates.
-    public void setTouch(int index, float x, float y){
-    	if(index >= mNumTouch) {
-    		return;
-    	}
-    	index *=2;
-        touchPos[index] = x;
-        touchPos[index+1] = mHeight - y;
-        posDirty = true;
-    }
-    
-    // Sync the Allocation touch.
-    public void syncTouch() {
-    	if(!posDirty) {
-    		return;
-    	}
-    	touch.copyFrom(touchPos);
-    	posDirty = false;
-    }
-
-    /**
-     * Creates the program based on the vertex and fragment shaders.
-     */
     @Override
     public void onSurfaceCreated(GL10 unused, EGLConfig config) {
-        // Set the background frame color
-        int bgColor = mPrefs.getInt("BGColor", ParticlesSurfaceView.DEFAULT_BG_COLOR);
-        float bgRed = Color.red(bgColor) / 255.f;
-        float bgGreen = Color.green(bgColor) / 255.f;
-        float bgBlue = Color.blue(bgColor) / 255.f;
-        GLES20.glClearColor(bgRed, bgGreen, bgBlue, 1.0f);
+        if (mParticlesSurfaceView != null) {
+            mParticlesSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
+        }
+        
+        GLES31.glDisable(GLES31.GL_DEPTH_TEST);
+        GLES31.glDisable(GLES31.GL_STENCIL_TEST);
+        GLES31.glDisable(GLES31.GL_BLEND);
+        GLES31.glDisable(GLES31.GL_SCISSOR_TEST);
 
-        mProgram = createProgram(mVertexShader, mFragmentShader);
-        if (mProgram == 0) {
-            return;
-        }
-        maPositionHandle = GLES20.glGetAttribLocation(mProgram, "aPosition");
-        checkGlError("glGetAttribLocation aPosition");
-        if (maPositionHandle == -1) {
-            throw new RuntimeException("Could not get attrib location for aPosition");
-        }
-        maColorHandle = GLES20.glGetAttribLocation(mProgram, "aColor");
-        checkGlError("glGetAttribLocation aColor");
-        if (maColorHandle == -1) {
-            throw new RuntimeException("Could not get attrib location for aColor");
-        }
-        muMVPMatrixHandle = GLES20.glGetUniformLocation(mProgram, "uMVPMatrix");
-        checkGlError("glGetUniformLocation uMVPMatrix");
-        if (muMVPMatrixHandle == -1) {
-            throw new RuntimeException("Could not get uniform location for uMVPMatrix");
-        }
+        mRenderProgram = createProgram(mVertexShader, mFragmentShader);
+        uRScale = GLES31.glGetUniformLocation(mRenderProgram, "uScale");
+        uROffset = GLES31.glGetUniformLocation(mRenderProgram, "uOffset");
+        uRPointSize = GLES31.glGetUniformLocation(mRenderProgram, "uPointSize");
 
-        muPointSizeHandle = GLES20.glGetUniformLocation(mProgram, "uPointSize");
-        if (muPointSizeHandle == -1) {
-            throw new RuntimeException("Could not get uniform location for uPointSize");
-        }
+        mComputeProgram = createComputeProgram(mComputeShader);
+        uCNumP = GLES31.glGetUniformLocation(mComputeProgram, "uNumP");
+        uCNumT = GLES31.glGetUniformLocation(mComputeProgram, "uNumT");
+        uCTouch = GLES31.glGetUniformLocation(mComputeProgram, "uT");
+        uCAtt = GLES31.glGetUniformLocation(mComputeProgram, "uAtt");
+        uCDrag = GLES31.glGetUniformLocation(mComputeProgram, "uDrag");
+        uCGradient = GLES31.glGetUniformLocation(mComputeProgram, "uGradient");
+
+        // Initialize Gradient LUT Texture
+        int[] tex = new int[1];
+        GLES31.glGenTextures(1, tex, 0);
+        mGradientTex = tex[0];
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, mGradientTex);
+        GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_MIN_FILTER, GLES31.GL_LINEAR);
+        GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_MAG_FILTER, GLES31.GL_LINEAR);
+        GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_WRAP_S, GLES31.GL_CLAMP_TO_EDGE);
+        GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_WRAP_T, GLES31.GL_CLAMP_TO_EDGE);
+        updateGradient();
     }
 
-    /**
-     * Called when starting the app, after a pause/resume, or when the screen orientation changes.
-     * Sets the initial attraction points and distributes all the particles uniformly over a disk
-     * (by calling the initParticles function of the script).
-     * It also allocates all the memory required for the script (Cf. Allocation.createSized()).
-     */
+    private void createFBO(int width, int height) {
+        if (mFbo != 0) {
+            GLES31.glDeleteFramebuffers(1, new int[]{mFbo}, 0);
+            GLES31.glDeleteTextures(1, new int[]{mFboTex}, 0);
+        }
+        mScaledWidth = Math.max(1, (width * mRenderScale) / 100);
+        mScaledHeight = Math.max(1, (height * mRenderScale) / 100);
+        int[] fbos = new int[1], texs = new int[1];
+        GLES31.glGenFramebuffers(1, fbos, 0); mFbo = fbos[0];
+        GLES31.glGenTextures(1, texs, 0); mFboTex = texs[0];
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, mFboTex);
+        GLES31.glTexImage2D(GLES31.GL_TEXTURE_2D, 0, GLES31.GL_RGBA, mScaledWidth, mScaledHeight, 0, GLES31.GL_RGBA, GLES31.GL_UNSIGNED_BYTE, null);
+        GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_MIN_FILTER, GLES31.GL_LINEAR);
+        GLES31.glTexParameteri(GLES31.GL_TEXTURE_2D, GLES31.GL_TEXTURE_MAG_FILTER, GLES31.GL_LINEAR);
+        GLES31.glBindFramebuffer(GLES31.GL_FRAMEBUFFER, mFbo);
+        GLES31.glFramebufferTexture2D(GLES31.GL_FRAMEBUFFER, GLES31.GL_COLOR_ATTACHMENT0, GLES31.GL_TEXTURE_2D, mFboTex, 0);
+        GLES31.glBindFramebuffer(GLES31.GL_FRAMEBUFFER, 0);
+    }
+
+    public void updateGradient() {
+        if (mGradientTex == 0) return;
+        int width = 256;
+        ByteBuffer bb = ByteBuffer.allocateDirect(width * 4).order(ByteOrder.nativeOrder());
+        float[] hsvS = new float[3], hsvF = new float[3], tmp = new float[3];
+        Color.colorToHSV(mPrefs.getInt("SlowColor", 0xFF0000FF), hsvS);
+        Color.colorToHSV(mPrefs.getInt("FastColor", 0xFFFF0000), hsvF);
+        float sh = hsvS[0]/360f, fh = hsvF[0]/360f;
+        int dir = mPrefs.getInt("HueDirection", 0);
+        if (sh < fh && dir == 0) sh += 1.0f; else if (sh > fh && dir == 1) fh += 1.0f;
+        for (int i = 0; i < width; i++) {
+            float t = i / (float)(width - 1);
+            tmp[0] = (((1.0f - t) * sh + t * fh) % 1.0f) * 360f;
+            tmp[1] = (1.0f - t) * hsvS[1] + t * hsvF[1];
+            tmp[2] = (1.0f - t) * hsvS[2] + t * hsvF[2];
+            int c = Color.HSVToColor(tmp);
+            bb.put((byte) Color.red(c)); bb.put((byte) Color.green(c)); bb.put((byte) Color.blue(c)); bb.put((byte) 255);
+        }
+        bb.position(0);
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, mGradientTex);
+        GLES31.glTexImage2D(GLES31.GL_TEXTURE_2D, 0, GLES31.GL_RGBA, width, 1, 0, GLES31.GL_RGBA, GLES31.GL_UNSIGNED_BYTE, bb);
+    }
+
     @Override
     public void onSurfaceChanged(GL10 unused, int width, int height) {
-    	mWidth = width;
-    	mHeight = height;
-        GLES20.glViewport(0, 0, width, height);
-
-        Matrix.orthoM(mProjectionMatrix, 0, 0, -width, 0, height, 3, 7);
-        // Set the camera position (View matrix)
-        Matrix.setLookAtM(mViewMatrix, 0, 0, 0, -3, 0f, 0f, 0f, 0f, 1.0f, 0.0f);
-        // Calculate the projection and view transformation
-        Matrix.multiplyMM(mMVPMatrix, 0, mProjectionMatrix, 0, mViewMatrix, 0);
-        
-        if(mWidth == mScript.get_width() && mHeight == mScript.get_height() && initialized)
-        	return; // onSurfaceChanged called after resuming the activity. check before reinitialize.
-        initScript(false);
+        mWidth = width; mHeight = height;
+        GLES31.glViewport(0, 0, width, height);
+        createFBO(width, height);
+        mScale[0] = 2.0f / (float)width;
+        mScale[1] = 2.0f / (float)height;
+        mOffset[0] = -1.0f;
+        mOffset[1] = -1.0f;
+        mInitialized = false;
     }
 
-    /**
-     * Initialize all the scrip parameters.
-     *
-     * @param forceAllocationsInit: set to true to force (re)initializing the Allocations.
-     */
-    private void initScript(boolean forceAllocationsInit) {
-        mScript.set_width(mWidth);
-        mScript.set_height(mHeight);
-        float hsv[] = new float[3];
-        Color.colorToHSV(mPrefs.getInt("SlowColor", ParticlesSurfaceView.DEFAULT_SLOW_COLOR), hsv);
-        mScript.set_slowHue(hsv[0] / 360.f);
-        mScript.set_slowSaturation(hsv[1]);
-        mScript.set_slowValue(hsv[2]);
-        Color.colorToHSV(mPrefs.getInt("FastColor", ParticlesSurfaceView.DEFAULT_FAST_COLOR), hsv);
-        mScript.set_fastHue(hsv[0] / 360.f);
-        mScript.set_fastSaturation(hsv[1]);
-        mScript.set_fastValue(hsv[2]);
-        mScript.set_hueDirection(mPrefs.getInt("HueDirection",
-                ParticlesSurfaceView.DEFAULT_HUE_DIRECTION));
-        mScript.set_f01AttractionCoef(mPrefs.getInt("F01Attraction",
-                ParticlesSurfaceView.DEFAULT_F01_ATTRACTION_COEF));
-        mScript.set_f01DragCoef(1 - mPrefs.getInt("F01Drag",
-                ParticlesSurfaceView.DEFAULT_F01_DRAG_COEF) / 100.f);
-        initAllocations(forceAllocationsInit);
+    private void initBuffers() {
+        if (mSSBOs[0] != 0) GLES31.glDeleteBuffers(2, mSSBOs, 0);
+        GLES31.glGenBuffers(2, mSSBOs, 0);
+        int structSize = 32;
+        ByteBuffer bb = ByteBuffer.allocateDirect(mPartCount * structSize).order(ByteOrder.nativeOrder());
+        Random r = new Random();
+        float radius = (float) Math.sqrt(mWidth*mWidth + mHeight*mHeight) / 2.0f;
+        for (int i = 0; i < mPartCount; i++) {
+            float rad = radius * (float)Math.sqrt(r.nextFloat());
+            float theta = r.nextFloat() * 6.2831853f;
+            bb.putFloat(mWidth/2.0f + rad * (float)Math.cos(theta)); // pos.x
+            bb.putFloat(mHeight/2.0f + rad * (float)Math.sin(theta)); // pos.y
+            bb.putFloat(0f); bb.putFloat(0f); // vel.xy
+            bb.putInt(0); bb.putInt(0); bb.putInt(0); bb.putInt(0); // color + pads
+        }
+        bb.position(0);
+        for (int i = 0; i < 2; i++) {
+            GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, mSSBOs[i]);
+            GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, mPartCount * structSize, bb, GLES31.GL_DYNAMIC_DRAW);
+        }
         resetAttractionPoints();
+        mInitialized = true;
     }
 
-    /**
-     * Initialize the Allocations used by the script. If it was already initialized and forceInit is
-     * set to false, then return immediately.
-     *
-     * @param forceInit: set to true to force (re)initializing the Allocations.
-     */
-    private void initAllocations(boolean forceInit) {
-        if(initialized && !forceInit) {
-            return;
+    public void setTouch(int index, float x, float y) {
+        if (index >= 16) return;
+        synchronized (mTouchLock) {
+            if (x < 0) { mTouchPos[2 * index] = -1.0f; mTouchPos[2 * index + 1] = -1.0f; }
+            else { mTouchPos[2 * index] = x; mTouchPos[2 * index + 1] = mHeight - y; }
         }
-        int indices_[] = new int[mPartCount];
-        indices = Allocation.createSized(mRS, Element.I32(mRS), mPartCount);
-        for(int i=0; i<mPartCount; i++) {
-            indices_[i] = i;
-        }
-        indices.copyFrom(indices_);
-        touch = Allocation.createSized(mRS, Element.F32_2(mRS), mNumTouch);
-        position = Allocation.createSized(mRS, Element.F32_2(mRS), mPartCount);
-        delta = Allocation.createSized(mRS, Element.F32_2(mRS), mPartCount);
-        color = Allocation.createSized(mRS, Element.F32_4(mRS), mPartCount);
-        mScript.bind_gTouch(touch);
-        mScript.bind_position(position);
-        mScript.bind_delta(delta);
-        mScript.bind_color(color);
-        initialized = true;
     }
 
-    /**
-     * Reset the attraction points and particles. Allocations must have been initialized previously
-     * by initAllocations.
-     */
+    public void syncTouch() {}
+
     public void resetAttractionPoints() {
-        if (initialized && mWidth > 0 && mHeight > 0) {
-            float l = (mWidth < mHeight ? mWidth : mHeight) / 3;
-            setTouch(0, mWidth / 2, mHeight / 2 + (mNumTouch == 1 ? 0 : l));
-            for (int i = 1; i < mNumTouch; i++) {
-                setTouch(i,
-                        (float) (mWidth / 2 + l * Math.sin(i * 2 * Math.PI / mNumTouch)),
-                        (float) (mHeight / 2 + l * Math.cos(i * 2 * Math.PI / mNumTouch)));
-            }
-            syncTouch();
-            mScript.invoke_initParticles();
+        if (mWidth <= 1) return;
+        float l = (mWidth < mHeight ? mWidth : mHeight) / 3.0f;
+        setTouch(0, mWidth / 2.0f, mHeight / 2.0f + (mNumTouch == 1 ? 0 : l));
+        for (int i = 1; i < mNumTouch; i++) {
+            setTouch(i, (float)(mWidth/2f + l*Math.sin(i*6.28/mNumTouch)), (float)(mHeight/2f + l*Math.cos(i*6.28/mNumTouch)));
         }
     }
 
-    /**
-     * Update and draw the particles.
-     */
     @Override
     public void onDrawFrame(GL10 unused) {
-        // Draw background color.
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
+        if (!mInitialized) { if (mWidth > 1) initBuffers(); else return; }
+
+        int inB = mSSBOs[mCurrentBufferIndex], outB = mSSBOs[1 - mCurrentBufferIndex];
+        if (!mUseDoubleBuffer) inB = outB = mSSBOs[0];
+
+        // 1. Compute Pass
+        GLES31.glUseProgram(mComputeProgram);
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 0, inB);
+        GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 1, outB);
+        GLES31.glActiveTexture(GLES31.GL_TEXTURE0);
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, mGradientTex);
+        GLES31.glUniform1i(uCGradient, 0);
+        GLES31.glUniform1i(uCNumP, mPartCount); GLES31.glUniform1i(uCNumT, mNumTouch);
+        synchronized (mTouchLock) { GLES31.glUniform2fv(uCTouch, 16, mTouchPos, 0); }
+        GLES31.glUniform1f(uCAtt, (float)mPrefs.getInt("F01Attraction", 100));
+        GLES31.glUniform1f(uCDrag, 1.0f - mPrefs.getInt("F01Drag", 4)/100f);
+        GLES31.glDispatchCompute((mPartCount + 255) / 256, 1, 1);
+        GLES31.glMemoryBarrier(GLES31.GL_SHADER_STORAGE_BARRIER_BIT | GLES31.GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
         
-        GLES20.glUseProgram(mProgram);
-        checkGlError("glUseProgram");
- 
-        GLES20.glUniformMatrix4fv(muMVPMatrixHandle, 1, false, mMVPMatrix, 0);
-        GLES20.glUniform1f(muPointSizeHandle, mParticleSize);
+        // 2. Render Pass
+        if (mRenderScale < 100) {
+            GLES31.glBindFramebuffer(GLES31.GL_FRAMEBUFFER, mFbo);
+            GLES31.glViewport(0, 0, mScaledWidth, mScaledHeight);
+        } else {
+            GLES31.glBindFramebuffer(GLES31.GL_FRAMEBUFFER, 0);
+            GLES31.glViewport(0, 0, mWidth, mHeight);
+        }
 
-        mScript.forEach_updateParticles(indices);
-        // There might be a better way to copy an Allocation to a FloatBuffer...
-        position.copyTo(pos);
-        mPointVertices.position(0);
-        mPointVertices.put(pos);
-        mPointVertices.position(0);
-        GLES20.glVertexAttribPointer(maPositionHandle, 2, GLES20.GL_FLOAT, false, 8, mPointVertices);
-        checkGlError("glVertexAttribPointer maPosition");
-        GLES20.glEnableVertexAttribArray(maPositionHandle);
+        int bg = mPrefs.getInt("BGColor", 0xFF000000);
+        GLES31.glClearColor(Color.red(bg)/255f, Color.green(bg)/255f, Color.blue(bg)/255f, 1f);
+        GLES31.glClear(GLES31.GL_COLOR_BUFFER_BIT);
 
-        color.copyTo(col);
-        mPointColors.position(0);
-        mPointColors.put(col);
-        mPointColors.position(0);
-        GLES20.glVertexAttribPointer(maColorHandle, 4, GLES20.GL_FLOAT, false, 16, mPointColors);
-        checkGlError("glVertexAttribPointer maColor");
-        GLES20.glEnableVertexAttribArray(maColorHandle);
+        GLES31.glUseProgram(mRenderProgram);
+        GLES31.glUniform2fv(uRScale, 1, mScale, 0);
+        GLES31.glUniform2fv(uROffset, 1, mOffset, 0);
+        GLES31.glUniform1f(uRPointSize, (float)mParticleSize);
         
-        GLES20.glDrawArrays(GLES20.GL_POINTS, 0, mPartCount);
-        checkGlError("glDrawArrays");
-
-        if (mParticlesSurfaceView != null) {
-            mParticlesSurfaceView.notifyFrameRendered();
+        GLES31.glBindBuffer(GLES31.GL_ARRAY_BUFFER, outB);
+        GLES31.glEnableVertexAttribArray(0);
+        GLES31.glVertexAttribPointer(0, 4, GLES31.GL_FLOAT, false, 32, 0);
+        GLES31.glEnableVertexAttribArray(1);
+        GLES31.glVertexAttribIPointer(1, 1, GLES31.GL_UNSIGNED_INT, 32, 16);
+        GLES31.glDrawArrays(GLES31.GL_POINTS, 0, mPartCount);
+        
+        if (mRenderScale < 100) {
+            GLES31.glBindFramebuffer(GLES31.GL_READ_FRAMEBUFFER, mFbo);
+            GLES31.glBindFramebuffer(GLES31.GL_DRAW_FRAMEBUFFER, 0);
+            GLES31.glBlitFramebuffer(0, 0, mScaledWidth, mScaledHeight, 0, 0, mWidth, mHeight, GLES31.GL_COLOR_BUFFER_BIT, GLES31.GL_LINEAR);
+            GLES31.glBindFramebuffer(GLES31.GL_FRAMEBUFFER, 0);
         }
+
+        if (mUseDoubleBuffer) mCurrentBufferIndex = 1 - mCurrentBufferIndex;
+        if (mParticlesSurfaceView != null) mParticlesSurfaceView.notifyFrameRendered(0, 0);
     }
 
-    private int createProgram(String vertexSource, String fragmentSource) {
-        int vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, vertexSource);
-        if (vertexShader == 0) {
-            return 0;
-        }
-
-        int pixelShader = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentSource);
-        if (pixelShader == 0) {
-            return 0;
-        }
-
-        int program = GLES20.glCreateProgram();
-        if (program != 0) {
-            GLES20.glAttachShader(program, vertexShader);
-            checkGlError("glAttachShader");
-            GLES20.glAttachShader(program, pixelShader);
-            checkGlError("glAttachShader");
-            GLES20.glLinkProgram(program);
-            int[] linkStatus = new int[1];
-            GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, linkStatus, 0);
-            if (linkStatus[0] != GLES20.GL_TRUE) {
-                Log.e(TAG, "Could not link program: ");
-                Log.e(TAG, GLES20.glGetProgramInfoLog(program));
-                GLES20.glDeleteProgram(program);
-                program = 0;
-            }
-        }
-        return program;
-    }
-
-    /**
-     * Utility method for compiling a OpenGL shader.
-     *
-     * <p><strong>Note:</strong> When developing shaders, use the checkGlError()
-     * method to debug shader coding errors.</p>
-     *
-     * @param type - Vertex or fragment shader type.
-     * @param shaderCode - String containing the shader code.
-     * @return - Returns an id for the shader.
-     */
-    public int loadShader(int type, String shaderCode){
-
-        // create a vertex shader type (GLES20.GL_VERTEX_SHADER)
-        // or a fragment shader type (GLES20.GL_FRAGMENT_SHADER)
-        int shader = GLES20.glCreateShader(type);
-
-        // add the source code to the shader and compile it
-        GLES20.glShaderSource(shader, shaderCode);
-        GLES20.glCompileShader(shader);
-
-        return shader;
-    }
-
-    /**
-    * Utility method for debugging OpenGL calls. Provide the name of the call
-    * just after making it:
-    *
-    * <pre>
-    * mColorHandle = GLES20.glGetUniformLocation(mProgram, "vColor");
-    * ParticlesRenderer.checkGlError("glGetUniformLocation");</pre>
-    *
-    * If the operation is not successful, the check throws an error.
-    *
-    * @param glOperation - Name of the OpenGL call to check.
-    */
-    public void checkGlError(String glOperation) {
-        int error;
-        while ((error = GLES20.glGetError()) != GLES20.GL_NO_ERROR) {
-            Log.e(TAG, glOperation + ": glError " + error);
-            throw new RuntimeException(glOperation + ": glError " + error);
-        }
+    private int createProgram(String v, String f) { int vs = loadShader(GLES31.GL_VERTEX_SHADER, v), fs = loadShader(GLES31.GL_FRAGMENT_SHADER, f); int p = GLES31.glCreateProgram(); GLES31.glAttachShader(p, vs); GLES31.glAttachShader(p, fs); GLES31.glLinkProgram(p); return p; }
+    private int createComputeProgram(String c) { int cs = loadShader(GLES31.GL_COMPUTE_SHADER, c); int p = GLES31.glCreateProgram(); GLES31.glAttachShader(p, cs); GLES31.glLinkProgram(p); return p; }
+    private int loadShader(int t, String c) {
+        int s = GLES31.glCreateShader(t);
+        GLES31.glShaderSource(s, c);
+        GLES31.glCompileShader(s);
+        int[] compiled = new int[1];
+        GLES31.glGetShaderiv(s, GLES31.GL_COMPILE_STATUS, compiled, 0);
+        if (compiled[0] == 0) Log.e(TAG, "Shader error (" + t + "): " + GLES31.glGetShaderInfoLog(s));
+        return s;
     }
 }

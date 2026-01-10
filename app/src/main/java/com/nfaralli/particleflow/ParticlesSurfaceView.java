@@ -17,7 +17,7 @@ public class ParticlesSurfaceView extends GLSurfaceView
         implements SharedPreferences.OnSharedPreferenceChangeListener {
 
     public interface FrameRenderedListener {
-        void onFrameRendered();
+        void onFrameRendered(long computeTimeNs, long renderTimeNs);
     }
 
     private FrameRenderedListener mFrameRenderedListener;
@@ -26,14 +26,14 @@ public class ParticlesSurfaceView extends GLSurfaceView
         mFrameRenderedListener = listener;
     }
 
-    public void notifyFrameRendered() {
+    public void notifyFrameRendered(long computeTimeNs, long renderTimeNs) {
         if (mFrameRenderedListener != null) {
-            mFrameRenderedListener.onFrameRendered();
+            mFrameRenderedListener.onFrameRendered(computeTimeNs, renderTimeNs);
         }
     }
 
     public static final String SHARED_PREFS_NAME="particleFlowPrefs";
-    public static final int DEFAULT_NUM_PARTICLES = 350000;
+    public static final int DEFAULT_NUM_PARTICLES = 1000000;
     public static final int MAX_NUM_PARTICLES = 10000000;
     public static final int DEFAULT_PARTICLE_SIZE = 1;
     public static final int DEFAULT_MAX_NUM_ATT_POINTS = 5;
@@ -59,12 +59,8 @@ public class ParticlesSurfaceView extends GLSurfaceView
     public ParticlesSurfaceView(Context context, AttributeSet attrs) {
         super(context, attrs);
 
-        // Create an OpenGL ES 2.0 context.
-        // Don't forget to set the following line in the manifest:
-        // <uses-feature android:glEsVersion="0x00020000" android:required="true" />
-        // Also, don't use setPreserveEGLContextOnPause, or double check that a change to the
-        // background color via the settings menu still works.
-        setEGLContextClientVersion(2);
+        // Create an OpenGL ES 3.0+ context.
+        setEGLContextClientVersion(3);
 
         // Create and set the Renderer for drawing on the GLSurfaceView
         mRenderer = new ParticlesRenderer(context, this);
@@ -133,6 +129,7 @@ public class ParticlesSurfaceView extends GLSurfaceView
         }
         mCount = new int[mPrefs.getInt("NumAttPoints", DEFAULT_MAX_NUM_ATT_POINTS)];
         mRenderer.onPrefsChanged();
+        mRenderer.updateGradient();
     }
 
     public void resetAttractionPoints(){
