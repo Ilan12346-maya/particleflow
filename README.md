@@ -1,4 +1,4 @@
-Hi, I’m Ilan 👋
+yeah,
 
 I’ve been using this app since my HTC One days — it has always been a joy to watch and play with.
 
