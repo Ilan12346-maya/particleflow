@@ -12,7 +12,8 @@ After updating to **Android 15**, the app unfortunately stopped working. While l
 - Migrated rendering from **legacy RenderScript to OpenGL ES 3.1**
 - Moved particle calculations to **GPU compute shaders**
 - Applied several **performance and memory optimizations**
-- from ~ 30fps 1m particle to ~110fps on SD8Gen2 
+- from ~ 30fps 1m particle to ~110fps on SD8Gen2
+- add an option for Render scale 
 
 Many thanks to **nfaralli** for creating this beautiful app in the first place 🙌  
 Below you can find the original README.
