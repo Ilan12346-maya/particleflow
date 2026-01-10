@@ -6,9 +6,13 @@ After updating to **Android 15**, the app unfortunately stopped working. While l
 
 ## Changes in this fork
 - Added an **FPS counter**
-- Increased the default particle count from **50k to 350k**
+- Increased the default particle count from **50.000 to 1.000.000**
 - Changed the default color tone to a **more vivid look**
 - Updated the build setup to work with **modern Android / Android 15**
+- Migrated rendering from **legacy RenderScript to OpenGL ES 3.1**
+- Moved particle calculations to **GPU compute shaders**
+- Applied several **performance and memory optimizations**
+- from ~ 30fps 1m particle to ~110fps on SD8Gen2 
 
 Many thanks to **nfaralli** for creating this beautiful app in the first place 🙌  
 Below you can find the original README.
