@@ -1,0 +1,13 @@
+.gradle
+build
+local.properties
+*.apk
+.idea
+*.iml
+.DS_Store
+*.sh
+*.py
+GEMINI.md
+
+build.index
+LAST_BACKUP_NAME
