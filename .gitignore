@@ -13,3 +13,15 @@ build.index
 LAST_BACKUP_NAME
 *.idsig
 debug.keystore
+
+# Ballast & Sensible Daten
+*.apk
+local.properties
+*.log
+build/
+app/build/
+.gradle/
+.idea/
+*.iml
+*.index
+LAST_BACKUP_NAME
