@@ -1,34 +1,23 @@
-# Gradle
 .gradle/
 build/
 app/build/
-
-# Android / SDK
 local.properties
 captures/
 *.apk
 *.ap_
 *.idsig
 debug.keystore
-
-# IDE - Android Studio / IntelliJ
 .idea/
 *.iml
 *.iws
 *.ipr
 out/
-
-# OS generated
 .DS_Store
 Thumbs.db
-
-# Project Specific
 build_output.log
 *.log
 build.index
 LAST_BACKUP_NAME
 GEMINI.md
-
-# Scripts (Note: remove if you want to track build.sh or backup.py)
-# *.sh
-# *.py
+*.sh
+*.py
