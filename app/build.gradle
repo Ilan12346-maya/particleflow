@@ -9,8 +9,8 @@ android {
     }
 
     defaultConfig {
-        versionCode 200
-        versionName "v1.4.1-cv200"
+        versionCode 202
+        versionName "v1.4.1-cv202"
         applicationId "com.nfaralli.particleflow"
         minSdkVersion 21
         targetSdkVersion 33
